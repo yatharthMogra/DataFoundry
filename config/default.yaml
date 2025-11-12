@@ -1,0 +1,62 @@
+##############################################
+# DataFlow - Default Configuration
+##############################################
+
+sources:
+  kafka:
+    enabled: true
+    bootstrap_servers: "kafka:9092"
+    topics:
+      - "orders"
+      - "clicks"
+    group_id: "dataflow-ingestion"
+    auto_offset_reset: "earliest"
+
+  webhook:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8080
+
+queue:
+  max_size: 10000
+  high_water_mark: 0.9    # fraction of max_size
+  low_water_mark: 0.5     # fraction of max_size
+
+pipeline:
+  num_workers: 4
+
+dedup:
+  enabled: true
+  backend: "memory"        # "memory" or "redis"
+  max_size: 100000         # max entries in LRU cache
+  redis_url: "redis://redis:6379/0"
+  ttl_seconds: 3600
+
+batch:
+  max_size: 1000
+  max_flush_interval_seconds: 10.0
+
+storage:
+  backend: "parquet"       # "parquet" or "postgres"
+  parquet:
+    output_dir: "./output/data"
+  postgres:
+    dsn: "postgresql://dataflow:dataflow@postgres:5432/dataflow"
+
+dlq:
+  backend: "file"          # "memory", "file", or "postgres"
+  file_path: "./output/dlq/dead_letters.jsonl"
+
+retry:
+  max_attempts: 3
+  backoff_base_seconds: 1.0
+  backoff_multiplier: 2.0
+  backoff_max_seconds: 30.0
+
+metrics:
+  enabled: true
+  port: 9090
+
+logging:
+  level: "INFO"
+  format: "json"           # "json" or "console"
