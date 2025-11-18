@@ -7,6 +7,14 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from src.metrics.prometheus import (
+    EVENTS_DLQ,
+    EVENTS_FAILED,
+    EVENTS_INGESTED,
+    EVENTS_PROCESSED,
+    EVENT_PROCESSING_LATENCY,
+    QUEUE_LENGTH,
+)
 from src.models import DLQRecord, RawEvent
 from src.pipeline.dedup import DeduplicationCache
 from src.pipeline.normalizer import normalize
@@ -94,6 +102,9 @@ class WorkerPool:
             except asyncio.CancelledError:
                 break
 
+            EVENTS_INGESTED.labels(source=raw.source).inc()
+            QUEUE_LENGTH.set(self._queue.size)
+
             try:
                 await self._process(raw)
             except Exception:
@@ -101,6 +112,7 @@ class WorkerPool:
                     "Unhandled error processing event",
                     extra={"event_id": raw.event_id, "worker_id": worker_id},
                 )
+                EVENTS_FAILED.labels(reason="unhandled_error").inc()
                 # Route unexpected failures to DLQ
                 await self._dlq.push(
                     DLQRecord(
@@ -110,6 +122,7 @@ class WorkerPool:
                         error_reason="unhandled processing error",
                     )
                 )
+                EVENTS_DLQ.labels(source=raw.source).inc()
 
     # ── Processing pipeline ─────────────────────────────────────
 
@@ -122,6 +135,7 @@ class WorkerPool:
         # 2. Validate
         is_valid, errors = validate(event)
         if not is_valid:
+            EVENTS_FAILED.labels(reason="validation").inc()
             await self._dlq.push(
                 DLQRecord(
                     event_id=raw.event_id,
@@ -130,18 +144,22 @@ class WorkerPool:
                     error_reason="; ".join(errors),
                 )
             )
+            EVENTS_DLQ.labels(source=raw.source).inc()
             return
 
         # 3. Dedup
         is_dup = await self._dedup.is_duplicate(event.event_id)
         if is_dup:
+            EVENTS_FAILED.labels(reason="duplicate").inc()
             logger.debug("Duplicate event dropped", extra={"event_id": event.event_id})
             return
 
         # 4. Route to batch
         await self._batch.add(event)
+        EVENTS_PROCESSED.inc()
 
         elapsed = time.monotonic() - start
+        EVENT_PROCESSING_LATENCY.observe(elapsed)
         logger.debug(
             "Event processed",
             extra={

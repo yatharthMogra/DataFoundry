@@ -8,6 +8,7 @@ import random
 import time
 
 from src.config import BatchConfig, RetryConfig
+from src.metrics.prometheus import BATCH_FLUSH_DURATION, EVENTS_PER_BATCH
 from src.models import InternalEvent
 from src.storage.base import StorageBackend
 
@@ -111,6 +112,8 @@ class BatchAccumulator:
         elapsed = time.monotonic() - start
 
         if success:
+            BATCH_FLUSH_DURATION.observe(elapsed)
+            EVENTS_PER_BATCH.observe(len(batch))
             logger.info(
                 "Batch flushed",
                 extra={
